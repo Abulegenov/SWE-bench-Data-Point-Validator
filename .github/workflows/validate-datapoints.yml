@@ -1,0 +1,203 @@
+name: Validate SWE-bench Data Points
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'data_points/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'data_points/**'
+
+jobs:
+  validate-datapoints:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for better change detection
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install UV
+      uses: astral-sh/setup-uv@v2
+      with:
+        version: "latest"
+    
+    - name: Cache UV dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/uv
+        key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-uv-
+    
+    - name: Install dependencies
+      run: |
+        uv sync --frozen
+    
+    - name: Detect changed data point files
+      id: changed-files
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          # For pull requests, compare with the base branch
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM ${{ github.event.pull_request.base.sha }} ${{ github.event.head.sha }} | grep '^data_points/.*\.json$' || true)
+        else
+          # For pushes, get the last commit's changes
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep '^data_points/.*\.json$' || true)
+        fi
+        
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No data point files changed"
+          echo "changed_files=" >> $GITHUB_OUTPUT
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "Changed data point files:"
+          echo "$CHANGED_FILES"
+          echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Validate changed data points
+      if: steps.changed-files.outputs.has_changes == 'true'
+      id: validation
+      run: |
+        echo "Validating changed data point files..."
+        
+        # Convert changed files to array and validate each one
+        IFS=$'\n' read -rd '' -a FILES <<< "${{ steps.changed-files.outputs.changed_files }}" || true
+        
+        if [ ${#FILES[@]} -eq 0 ]; then
+          echo "No files to validate"
+          echo "validation_success=true" >> $GITHUB_OUTPUT
+          echo "validation_message=No data point files to validate" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        # Build command with all changed files
+        VALIDATE_CMD="uv run python -m swe_bench_validator --timeout 600 --verbose"
+        
+        for file in "${FILES[@]}"; do
+          if [ -f "$file" ]; then
+            VALIDATE_CMD="$VALIDATE_CMD --file $file"
+          fi
+        done
+        
+        echo "Running validation command: $VALIDATE_CMD"
+        
+        # Run validation and capture output
+        if $VALIDATE_CMD; then
+          echo "validation_success=true" >> $GITHUB_OUTPUT
+          echo "validation_message=All changed data points validated successfully" >> $GITHUB_OUTPUT
+        else
+          VALIDATION_EXIT_CODE=$?
+          echo "validation_success=false" >> $GITHUB_OUTPUT
+          
+          if [ $VALIDATION_EXIT_CODE -eq 1 ]; then
+            echo "validation_message=Validation failed with errors" >> $GITHUB_OUTPUT
+          elif [ $VALIDATION_EXIT_CODE -eq 2 ]; then
+            echo "validation_message=Some data points failed validation" >> $GITHUB_OUTPUT
+          else
+            echo "validation_message=Validation failed with unknown error (exit code: $VALIDATION_EXIT_CODE)" >> $GITHUB_OUTPUT
+          fi
+        fi
+    
+    - name: Run full validation (if no specific files changed)
+      if: steps.changed-files.outputs.has_changes == 'false'
+      id: full-validation
+      run: |
+        echo "No specific files changed, running full validation of all data points..."
+        
+        if uv run python -m swe_bench_validator --timeout 600 --verbose; then
+          echo "validation_success=true" >> $GITHUB_OUTPUT
+          echo "validation_message=All data points validated successfully" >> $GITHUB_OUTPUT
+        else
+          VALIDATION_EXIT_CODE=$?
+          echo "validation_success=false" >> $GITHUB_OUTPUT
+          
+          if [ $VALIDATION_EXIT_CODE -eq 1 ]; then
+            echo "validation_message=Validation failed with errors" >> $GITHUB_OUTPUT
+          elif [ $VALIDATION_EXIT_CODE -eq 2 ]; then
+            echo "validation_message=Some data points failed validation" >> $GITHUB_OUTPUT
+          else
+            echo "validation_message=Validation failed with unknown error (exit code: $VALIDATION_EXIT_CODE)" >> $GITHUB_OUTPUT
+          fi
+        fi
+    
+    - name: Set validation result
+      id: result
+      run: |
+        if [ "${{ steps.changed-files.outputs.has_changes }}" = "true" ]; then
+          echo "success=${{ steps.validation.outputs.validation_success }}" >> $GITHUB_OUTPUT
+          echo "message=${{ steps.validation.outputs.validation_message }}" >> $GITHUB_OUTPUT
+        else
+          echo "success=${{ steps.full-validation.outputs.validation_success }}" >> $GITHUB_OUTPUT
+          echo "message=${{ steps.full-validation.outputs.validation_message }}" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Comment on PR (if validation failed)
+      if: github.event_name == 'pull_request' && steps.result.outputs.success == 'false'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const commentBody = `## ❌ SWE-bench Data Point Validation Failed
+          
+          ${{ steps.result.outputs.message }}
+          
+          Please check the validation logs for detailed error information and fix the issues before merging.
+          
+          <details>
+          <summary>View validation details</summary>
+          
+          Check the "Validate SWE-bench Data Points" workflow run for full details.
+          </details>`;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: commentBody
+          });
+    
+    - name: Comment on PR (if validation passed)
+      if: github.event_name == 'pull_request' && steps.result.outputs.success == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const commentBody = `## ✅ SWE-bench Data Point Validation Passed
+          
+          ${{ steps.result.outputs.message }}
+          
+          All data points have been successfully validated using the official SWE-bench evaluation harness.
+          
+          <details>
+          <summary>View validation details</summary>
+          
+          Check the "Validate SWE-bench Data Points" workflow run for full details.
+          </details>`;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: commentBody
+          });
+    
+    - name: Fail the job if validation failed
+      if: steps.result.outputs.success == 'false'
+      run: |
+        echo "❌ Validation failed: ${{ steps.result.outputs.message }}"
+        exit 1
+    
+    - name: Success message
+      if: steps.result.outputs.success == 'true'
+      run: |
+        echo "✅ Validation passed: ${{ steps.result.outputs.message }}"
