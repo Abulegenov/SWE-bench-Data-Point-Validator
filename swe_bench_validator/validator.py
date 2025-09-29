@@ -15,28 +15,16 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeEl
 
 # SWE-bench library imports
 try:
-<<<<<<< Updated upstream
-    from swebench.harness.run_evaluation import run_instance, get_dataset_from_preds
-    from swebench.harness.constants import KEY_INSTANCE_ID, KEY_MODEL, KEY_PREDICTION
-    from swebench.harness.test_spec.test_spec import make_test_spec
-    from swebench.harness.utils import load_swebench_dataset
-    from swebench.harness.grading import get_eval_report
-=======
     from swebench.harness.run_evaluation import run_instance
     from swebench.harness.constants import KEY_INSTANCE_ID, KEY_MODEL, KEY_PREDICTION
     # Use the provided local test_spec helper to avoid dataset dependency
     from test_spec import make_test_spec
->>>>>>> Stashed changes
     import docker
     SWEBENCH_AVAILABLE = True
 except ImportError:
     # Fallback for demonstration purposes
     SWEBENCH_AVAILABLE = False
     run_instance = None
-<<<<<<< Updated upstream
-    get_dataset_from_preds = None
-=======
->>>>>>> Stashed changes
     KEY_INSTANCE_ID = "instance_id"
     KEY_MODEL = "model_name_or_path"
     KEY_PREDICTION = "patch"
@@ -164,35 +152,15 @@ class SWEBenchValidator:
         try:
             console.print(f"[blue]Validating {instance_id} with SWE-bench...[/blue]")
             
-<<<<<<< Updated upstream
-            # Convert to prediction format
-=======
             # Convert to prediction format (acts as model prediction)
->>>>>>> Stashed changes
             prediction = self._convert_to_prediction_format(data_point)
 
             # Create TestSpec directly from the provided JSON instance
             test_spec = make_test_spec(data_point)
             
-<<<<<<< Updated upstream
-            # Load the dataset to get the instance
-            dataset = load_swebench_dataset("SWE-bench/SWE-bench_Lite", "test", [instance_id])
-            if not dataset:
-                raise ValueError(f"Instance {instance_id} not found in dataset")
-            
-            instance = dataset[0]
-            
-            # Create test spec
-            test_spec = make_test_spec(instance)
-            
             # Initialize Docker client
             client = docker.from_env()
             
-=======
-            # Initialize Docker client
-            client = docker.from_env()
-            
->>>>>>> Stashed changes
             # Run the instance
             result = run_instance(
                 test_spec=test_spec,
