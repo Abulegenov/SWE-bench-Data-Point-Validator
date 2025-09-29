@@ -4,7 +4,7 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
-  
+
 on:
   push:
     branches: [ main, develop ]
@@ -14,7 +14,7 @@ on:
     branches: [ main, develop ]
     paths:
       - 'data_points/**'
-
+  workflow_dispatch:
 jobs:
   validate-datapoints:
     runs-on: ubuntu-latest
